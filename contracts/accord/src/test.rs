@@ -622,3 +622,169 @@ fn full_lifecycle_2of3() {
         ProposalStatus::Executed
     );
 }
+
+// ─── Active Count ─────────────────────────────────────────────────────────────
+
+#[test]
+fn active_count_stays_accurate_after_execute() {
+    let (env, client, owner_a, owner_b, owner_c, _, token_client) = setup(2);
+    let recipient = Address::generate(&env);
+    
+    // Fill up the active slots
+    for _ in 0..50 {
+        client.create_proposal(
+            &owner_a,
+            &recipient,
+            &1_000_000_i128,
+            &token_client.address,
+            &str(&env, "Fill"),
+            &DEADLINE,
+        );
+    }
+    
+    // 51st proposal should fail
+    assert_eq!(
+        client.try_create_proposal(
+            &owner_a,
+            &recipient,
+            &1_000_000_i128,
+            &token_client.address,
+            &str(&env, "Overflow"),
+            &DEADLINE,
+        ),
+        Err(Ok(ContractError::TooManyActiveProposals))
+    );
+    
+    // Approve and execute 2 proposals
+    client.approve(&owner_a, &1);
+    client.approve(&owner_b, &1);
+    client.execute(&owner_c, &1);
+    
+    client.approve(&owner_a, &2);
+    client.approve(&owner_b, &2);
+    client.execute(&owner_c, &2);
+    
+    // Now we should be able to create 2 more proposals
+    let id51 = client.create_proposal(
+        &owner_a,
+        &recipient,
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "New 1"),
+        &DEADLINE,
+    );
+    let id52 = client.create_proposal(
+        &owner_a,
+        &recipient,
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "New 2"),
+        &DEADLINE,
+    );
+    assert_eq!(id51, 51);
+    assert_eq!(id52, 52);
+    
+    // And the 53rd should fail again
+    assert_eq!(
+        client.try_create_proposal(
+            &owner_a,
+            &recipient,
+            &1_000_000_i128,
+            &token_client.address,
+            &str(&env, "Overflow 2"),
+            &DEADLINE,
+        ),
+        Err(Ok(ContractError::TooManyActiveProposals))
+    );
+}
+
+#[test]
+fn active_count_stays_accurate_after_expire() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    let recipient = Address::generate(&env);
+    
+    let short_deadline = NOW + 1_000;
+    let long_deadline = NOW + 10_000;
+    
+    // Create 2 proposals with a short deadline
+    client.create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "Short 1"), &short_deadline);
+    client.create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "Short 2"), &short_deadline);
+    
+    // Create 48 proposals with a long deadline
+    for _ in 2..50 {
+        client.create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "Long"), &long_deadline);
+    }
+    
+    // 51st proposal should fail
+    assert_eq!(
+        client.try_create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "Overflow"), &long_deadline),
+        Err(Ok(ContractError::TooManyActiveProposals))
+    );
+    
+    // Advance time past the short deadline
+    set_timestamp(&env, short_deadline + 1);
+    
+    // Execute the expired proposals
+    assert_eq!(client.try_execute(&owner_a, &1), Err(Ok(ContractError::ProposalExpired)));
+    assert_eq!(client.try_execute(&owner_a, &2), Err(Ok(ContractError::ProposalExpired)));
+    
+    // Now we should be able to create 2 more proposals
+    let id51 = client.create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "New 1"), &long_deadline);
+    let id52 = client.create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "New 2"), &long_deadline);
+    assert_eq!(id51, 51);
+    assert_eq!(id52, 52);
+    
+    // And the 53rd should fail again
+    assert_eq!(
+        client.try_create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "Overflow 2"), &long_deadline),
+        Err(Ok(ContractError::TooManyActiveProposals))
+    );
+}
+
+#[test]
+fn active_count_stays_accurate_mixed() {
+    let (env, client, owner_a, owner_b, owner_c, _, token_client) = setup(2);
+    let recipient = Address::generate(&env);
+    
+    let short_deadline = NOW + 1_000;
+    let long_deadline = NOW + 10_000;
+    
+    // Create 1 short deadline
+    client.create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "Short 1"), &short_deadline);
+    
+    // Create 49 long deadline
+    for _ in 1..50 {
+        client.create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "Long"), &long_deadline);
+    }
+    
+    // 51st proposal should fail
+    assert_eq!(
+        client.try_create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "Overflow"), &long_deadline),
+        Err(Ok(ContractError::TooManyActiveProposals))
+    );
+    
+    // Execute proposal 2 (long deadline)
+    client.approve(&owner_a, &2);
+    client.approve(&owner_b, &2);
+    client.execute(&owner_c, &2);
+    
+    // Create 1 new proposal (long deadline)
+    let id51 = client.create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "New 1"), &long_deadline);
+    assert_eq!(id51, 51);
+    
+    // Advance time past the short deadline
+    set_timestamp(&env, short_deadline + 1);
+    
+    // Execute the expired proposal 1
+    assert_eq!(client.try_execute(&owner_a, &1), Err(Ok(ContractError::ProposalExpired)));
+    
+    // Create 1 new proposal (long deadline)
+    let id52 = client.create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "New 2"), &long_deadline);
+    assert_eq!(id52, 52);
+    
+    // 53rd proposal should fail
+    assert_eq!(
+        client.try_create_proposal(&owner_a, &recipient, &1_000_000_i128, &token_client.address, &str(&env, "Overflow 2"), &long_deadline),
+        Err(Ok(ContractError::TooManyActiveProposals))
+    );
+}
