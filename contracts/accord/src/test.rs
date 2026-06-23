@@ -22,8 +22,25 @@ const NOW: u64 = 1_000;
 const DEADLINE: u64 = NOW + 86_400; // +1 day
 
 /// Sets up an env with 3 owners, a threshold, and a funded token.
+/// Time-lock delay is 0 (no delay).
 fn setup(
     threshold: u32,
+) -> (
+    Env,
+    AccordContractClient<'static>,
+    Address,
+    Address,
+    Address,
+    Address, // non-owner
+    token::Client<'static>,
+) {
+    setup_with_timelock(threshold, 0)
+}
+
+/// Sets up an env with 3 owners, a threshold, a funded token, and a custom time-lock delay.
+fn setup_with_timelock(
+    threshold: u32,
+    time_lock_delay: u64,
 ) -> (
     Env,
     AccordContractClient<'static>,
@@ -54,7 +71,7 @@ fn setup(
     owners.push_back(owner_a.clone());
     owners.push_back(owner_b.clone());
     owners.push_back(owner_c.clone());
-    client.initialize(&owners, &threshold);
+    client.initialize(&owners, &threshold, &time_lock_delay);
 
     // Fund the multisig contract so it can pay out proposals.
     token_sac.mint(&contract_id, &1_000_000_000_000_i128);
@@ -83,7 +100,7 @@ fn initialize_rejects_second_call() {
     owners.push_back(owner_b);
     owners.push_back(owner_c);
     assert_eq!(
-        client.try_initialize(&owners, &2),
+        client.try_initialize(&owners, &2, &0),
         Err(Ok(ContractError::AlreadyInitialized))
     );
 }
@@ -97,7 +114,7 @@ fn initialize_rejects_threshold_zero() {
     let mut owners = Vec::new(&env);
     owners.push_back(Address::generate(&env));
     assert_eq!(
-        client.try_initialize(&owners, &0),
+        client.try_initialize(&owners, &0, &0),
         Err(Ok(ContractError::InvalidThreshold))
     );
 }
@@ -111,7 +128,7 @@ fn initialize_rejects_threshold_above_count() {
     let mut owners = Vec::new(&env);
     owners.push_back(Address::generate(&env));
     assert_eq!(
-        client.try_initialize(&owners, &2),
+        client.try_initialize(&owners, &2, &0),
         Err(Ok(ContractError::InvalidThreshold))
     );
 }
@@ -127,9 +144,15 @@ fn initialize_rejects_duplicate_owners() {
     owners.push_back(dup.clone());
     owners.push_back(dup);
     assert_eq!(
-        client.try_initialize(&owners, &1),
+        client.try_initialize(&owners, &1, &0),
         Err(Ok(ContractError::DuplicateOwner))
     );
+}
+
+#[test]
+fn initialize_stores_time_lock_delay() {
+    let (_, client, _, _, _, _, _) = setup_with_timelock(2, 7200);
+    assert_eq!(client.get_time_lock_delay(), 7200);
 }
 
 // ─── Proposal Creation ───────────────────────────────────────────────────────
@@ -241,6 +264,24 @@ fn create_proposal_emits_created_event() {
     assert!(
         !contract_events.events().is_empty(),
         "expected a 'created' event to be emitted"
+    );
+}
+
+// ─── Issue #33: Reject contract as recipient ─────────────────────────────────
+
+#[test]
+fn create_proposal_rejects_contract_as_recipient() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    assert_eq!(
+        client.try_create_proposal(
+            &owner_a,
+            &client.address,
+            &1_000_000_i128,
+            &token_client.address,
+            &str(&env, "Self-send"),
+            &DEADLINE,
+        ),
+        Err(Ok(ContractError::InvalidRecipient))
     );
 }
 
