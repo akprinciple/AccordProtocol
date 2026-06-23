@@ -19,6 +19,18 @@ export default function App() {
 
   const { proposals, owners, stats, loading, error, refresh } = useContract();
   const wallet = useWallet();
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    if (!wallet.address) return;
+    try {
+      navigator.clipboard.writeText(wallet.address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // ignore clipboard errors
+    }
+  }
 
   const activeProposals = proposals.filter((p) =>
     ["pending", "ready"].includes(p.status)
@@ -100,13 +112,33 @@ export default function App() {
               Install Freighter
             </a>
           ) : wallet.address ? (
-            <button
-              type="button"
-              onClick={wallet.disconnect}
-              className="text-sm px-4 py-1.5 rounded-lg font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-            >
-              {shortenAddr(wallet.address)}
-            </button>
+            <div className="flex items-center gap-3">
+              <div className="text-sm px-3 py-1 rounded-lg bg-zinc-800 text-zinc-300">
+                <div>{shortenAddr(wallet.address)}</div>
+                {wallet.xlmBalance != null && wallet.usdcBalance != null && (
+                  <div className="text-xs text-zinc-400">
+                    <span className="mr-3">{wallet.xlmBalance} XLM</span>
+                    <span>{wallet.usdcBalance} USDC</span>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="text-sm px-3 py-1 rounded-lg font-medium bg-zinc-700 text-zinc-200 hover:bg-zinc-600 transition-colors"
+              >
+                {copied ? "Copied!" : "Copy"}
+              </button>
+
+              <button
+                type="button"
+                onClick={wallet.disconnect}
+                className="text-sm px-3 py-1 rounded-lg font-medium bg-transparent text-zinc-400 hover:text-zinc-200 transition-colors"
+              >
+                Disconnect
+              </button>
+            </div>
           ) : (
             <button
               type="button"
